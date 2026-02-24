@@ -1,5 +1,5 @@
 -- ============================================================
--- Drift Sentinel — Supabase Schema (MVP-B)
+-- Drift Sentinel — Supabase Schema (MVP-B, Hardened)
 -- Run this in the Supabase SQL Editor
 -- ============================================================
 
@@ -7,21 +7,35 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
--- 1. fills_canonical — Subsystem 0 output
+-- 1. accounts — Ownership mapping (for RLS + multi-tenant)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS accounts (
+  account_ref    TEXT PRIMARY KEY,
+  user_id        UUID NOT NULL,
+  source         TEXT NOT NULL DEFAULT 'tradovate',
+  created_at_utc TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_user
+  ON accounts (user_id);
+
+-- ============================================================
+-- 2. fills_canonical — Subsystem 0 output
 -- ============================================================
 CREATE TABLE IF NOT EXISTS fills_canonical (
-  event_id       TEXT PRIMARY KEY,
-  source         TEXT NOT NULL DEFAULT 'tradovate',
-  account_ref    TEXT NOT NULL,
-  timestamp_utc  TIMESTAMPTZ NOT NULL,
+  event_id        TEXT PRIMARY KEY,
+  source          TEXT NOT NULL DEFAULT 'tradovate',
+  account_ref     TEXT NOT NULL,
+  timestamp_utc   TIMESTAMPTZ NOT NULL,
   instrument_root TEXT NOT NULL,
-  contract       TEXT NOT NULL,
-  side           TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
-  qty            INTEGER NOT NULL CHECK (qty > 0),
-  price          DOUBLE PRECISION NOT NULL CHECK (price > 0),
-  commission     DOUBLE PRECISION NOT NULL DEFAULT 0,
-  off_session    BOOLEAN NOT NULL DEFAULT false,
-  ingested_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  contract        TEXT NOT NULL,
+  side            TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
+  qty             INTEGER NOT NULL CHECK (qty > 0),
+  price           DOUBLE PRECISION NOT NULL CHECK (price > 0),
+  commission      DOUBLE PRECISION NOT NULL DEFAULT 0,
+  off_session     BOOLEAN NOT NULL DEFAULT false,
+  ingest_run_id   UUID,
+  ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_fills_account_ts
@@ -30,42 +44,50 @@ CREATE INDEX IF NOT EXISTS idx_fills_account_ts
 CREATE INDEX IF NOT EXISTS idx_fills_account_date
   ON fills_canonical (account_ref, (timestamp_utc::date));
 
+CREATE INDEX IF NOT EXISTS idx_fills_ingest_run
+  ON fills_canonical (ingest_run_id);
+
 -- ============================================================
--- 2. ingest_runs — Upload tracking
+-- 3. ingest_runs — Upload tracking
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ingest_runs (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  account_ref     TEXT NOT NULL,
-  source_file     TEXT NOT NULL,
-  fills_parsed    INTEGER NOT NULL DEFAULT 0,
-  fills_new       INTEGER NOT NULL DEFAULT 0,
-  fills_duplicate INTEGER NOT NULL DEFAULT 0,
-  fills_rejected  INTEGER NOT NULL DEFAULT 0,
-  started_at_utc  TIMESTAMPTZ NOT NULL,
+  id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  account_ref      TEXT NOT NULL,
+  source_file      TEXT NOT NULL,
+  fills_parsed     INTEGER NOT NULL DEFAULT 0,
+  fills_new        INTEGER NOT NULL DEFAULT 0,
+  fills_duplicate  INTEGER NOT NULL DEFAULT 0,
+  fills_rejected   INTEGER NOT NULL DEFAULT 0,
+  started_at_utc   TIMESTAMPTZ NOT NULL,
   completed_at_utc TIMESTAMPTZ,
-  status          TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failed')),
-  error_message   TEXT,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  status           TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failed')),
+  error_message    TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingest_account
   ON ingest_runs (account_ref, created_at DESC);
 
 -- ============================================================
--- 3. violations — Subsystem 3 output
+-- 4. violations — Subsystem 3 output
 -- ============================================================
 CREATE TABLE IF NOT EXISTS violations (
-  violation_id      TEXT PRIMARY KEY,
-  account_ref       TEXT NOT NULL,
-  rule_id           TEXT NOT NULL,
-  mode              TEXT NOT NULL CHECK (mode IN ('OVERSIZE', 'OFF_SESSION', 'FREQUENCY', 'BASELINE_SHIFT')),
-  severity          TEXT NOT NULL CHECK (severity IN ('LOW', 'MED', 'HIGH', 'CRITICAL')),
-  points            INTEGER NOT NULL,
-  window_start_utc  TIMESTAMPTZ NOT NULL,
-  window_end_utc    TIMESTAMPTZ NOT NULL,
+  violation_id       TEXT PRIMARY KEY,
+  account_ref        TEXT NOT NULL,
+  rule_id            TEXT NOT NULL CHECK (rule_id IN (
+                       'OVERSIZE_V1', 'OFF_SESSION_V1', 'FREQUENCY_V1', 'BASELINE_SHIFT_V1'
+                     )),
+  mode               TEXT NOT NULL CHECK (mode IN (
+                       'OVERSIZE', 'OFF_SESSION', 'FREQUENCY', 'BASELINE_SHIFT'
+                     )),
+  mode_instance_id   TEXT NOT NULL,
+  severity           TEXT NOT NULL CHECK (severity IN ('LOW', 'MED', 'HIGH', 'CRITICAL')),
+  points             INTEGER NOT NULL,
+  window_start_utc   TIMESTAMPTZ NOT NULL,
+  window_end_utc     TIMESTAMPTZ NOT NULL,
   evidence_event_ids TEXT[] NOT NULL,
-  first_seen_utc    TIMESTAMPTZ NOT NULL,
-  created_at_utc    TIMESTAMPTZ NOT NULL DEFAULT now()
+  first_seen_utc     TIMESTAMPTZ NOT NULL,
+  created_at_utc     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_violations_account
@@ -74,32 +96,38 @@ CREATE INDEX IF NOT EXISTS idx_violations_account
 CREATE INDEX IF NOT EXISTS idx_violations_mode
   ON violations (account_ref, mode, created_at_utc DESC);
 
+CREATE INDEX IF NOT EXISTS idx_violations_mode_instance
+  ON violations (mode_instance_id);
+
 -- ============================================================
--- 4. drift_scores — Evaluation snapshots
+-- 5. drift_scores — Evaluation snapshots
 -- ============================================================
 CREATE TABLE IF NOT EXISTS drift_scores (
-  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  account_ref       TEXT NOT NULL,
-  drift_index       INTEGER NOT NULL CHECK (drift_index >= 0 AND drift_index <= 100),
-  drift_state       TEXT NOT NULL CHECK (drift_state IN ('Stable', 'Drift forming', 'Compromised', 'Breakdown')),
-  total_points      INTEGER NOT NULL,
-  drivers           JSONB NOT NULL DEFAULT '[]',
-  violation_ids     TEXT[] NOT NULL DEFAULT '{}',
+  id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  account_ref         TEXT NOT NULL,
+  drift_index         INTEGER NOT NULL CHECK (drift_index >= 0 AND drift_index <= 100),
+  drift_state         TEXT NOT NULL CHECK (drift_state IN (
+                        'STABLE', 'DRIFT_FORMING', 'COMPROMISED', 'BREAKDOWN'
+                      )),
+  total_points        INTEGER NOT NULL,
+  drivers             JSONB NOT NULL DEFAULT '[]',
+  violation_ids       TEXT[] NOT NULL DEFAULT '{}',
   scoring_window_size INTEGER NOT NULL,
-  baseline_status   TEXT NOT NULL CHECK (baseline_status IN ('ready', 'building')),
-  evaluated_at_utc  TIMESTAMPTZ NOT NULL,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+  baseline_status     TEXT NOT NULL CHECK (baseline_status IN ('ready', 'building')),
+  evaluated_at_utc    TIMESTAMPTZ NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_drift_account
   ON drift_scores (account_ref, evaluated_at_utc DESC);
 
 -- ============================================================
--- 5. webhook_events — TradingView optional context
+-- 6. webhook_events — TradingView optional context
 -- ============================================================
 CREATE TABLE IF NOT EXISTS webhook_events (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_license_id TEXT NOT NULL,
+  account_ref     TEXT,
   event_type      TEXT NOT NULL,
   symbol          TEXT NOT NULL,
   timestamp_utc   TIMESTAMPTZ NOT NULL,
@@ -111,12 +139,17 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 CREATE INDEX IF NOT EXISTS idx_webhook_license
   ON webhook_events (user_license_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_webhook_account
+  ON webhook_events (account_ref, created_at DESC);
+
 -- ============================================================
--- 6. onset_state — Drift onset tracking per mode
+-- 7. onset_state — Drift onset tracking per mode
 -- ============================================================
 CREATE TABLE IF NOT EXISTS onset_state (
   account_ref     TEXT NOT NULL,
-  mode            TEXT NOT NULL CHECK (mode IN ('OVERSIZE', 'OFF_SESSION', 'FREQUENCY', 'BASELINE_SHIFT')),
+  mode            TEXT NOT NULL CHECK (mode IN (
+                    'OVERSIZE', 'OFF_SESSION', 'FREQUENCY', 'BASELINE_SHIFT'
+                  )),
   status          TEXT NOT NULL CHECK (status IN ('ACTIVE', 'INACTIVE')),
   onset_utc       TIMESTAMPTZ,
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -124,25 +157,25 @@ CREATE TABLE IF NOT EXISTS onset_state (
 );
 
 -- ============================================================
--- 7. licenses — Entitlement stubs (MVP)
+-- 8. licenses — Entitlement stubs (MVP)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS licenses (
-  license_id            TEXT PRIMARY KEY,
-  user_id               TEXT NOT NULL,
-  status                TEXT NOT NULL CHECK (status IN ('trial', 'active', 'expired', 'suspended')),
-  plan                  TEXT NOT NULL DEFAULT 'trial',
-  trial_ends_at         TIMESTAMPTZ,
+  license_id             TEXT PRIMARY KEY,
+  user_id                UUID NOT NULL,
+  status                 TEXT NOT NULL CHECK (status IN ('trial', 'active', 'expired', 'suspended')),
+  plan                   TEXT NOT NULL DEFAULT 'trial',
+  trial_ends_at          TIMESTAMPTZ,
   current_period_ends_at TIMESTAMPTZ,
-  max_accounts          INTEGER NOT NULL DEFAULT 1,
-  max_fills_per_month   INTEGER NOT NULL DEFAULT 5000,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  max_accounts           INTEGER NOT NULL DEFAULT 1,
+  max_fills_per_month    INTEGER NOT NULL DEFAULT 5000,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_licenses_user
   ON licenses (user_id);
 
 -- ============================================================
--- 8. user_configs — Per-account drift engine config
+-- 9. user_configs — Per-account drift engine config
 -- ============================================================
 CREATE TABLE IF NOT EXISTS user_configs (
   account_ref            TEXT PRIMARY KEY,
@@ -155,8 +188,28 @@ CREATE TABLE IF NOT EXISTS user_configs (
 );
 
 -- ============================================================
+-- 10. device_tokens — Windows Helper auth
+-- ============================================================
+CREATE TABLE IF NOT EXISTS device_tokens (
+  device_id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id          UUID NOT NULL,
+  account_ref      TEXT NOT NULL,
+  token_hash       TEXT NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+  created_at_utc   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at_utc TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_tokens_user
+  ON device_tokens (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_device_tokens_account
+  ON device_tokens (account_ref);
+
+-- ============================================================
 -- Row Level Security (prep for multi-tenant)
 -- ============================================================
+ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fills_canonical ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ingest_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE violations ENABLE ROW LEVEL SECURITY;
@@ -165,6 +218,7 @@ ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE onset_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE licenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_tokens ENABLE ROW LEVEL SECURITY;
 
 -- Service role bypasses RLS, so backend access works.
--- Browser/extension access will need per-user policies (added later).
+-- Browser/extension access will need per-user policies via accounts.user_id (added later).

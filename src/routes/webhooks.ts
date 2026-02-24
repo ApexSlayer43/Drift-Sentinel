@@ -11,6 +11,7 @@ const router = Router();
 interface WebhookPayload {
   ds_version: string;
   user_license_id: string;
+  account_ref?: string;
   event_type: string;
   symbol: string;
   timestamp_utc: string;
@@ -62,6 +63,7 @@ router.post(
       // Store webhook event
       const { error } = await supabase.from('webhook_events').insert({
         user_license_id: payload.user_license_id,
+        account_ref: payload.account_ref || null,
         event_type: payload.event_type,
         symbol: payload.symbol,
         timestamp_utc: payload.timestamp_utc,

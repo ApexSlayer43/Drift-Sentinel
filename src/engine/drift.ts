@@ -31,15 +31,27 @@ import {
 // ============================================================
 
 function driftStateFromIndex(index: number): DriftState {
-  if (index <= 20) return 'Stable';
-  if (index <= 40) return 'Drift forming';
-  if (index <= 60) return 'Compromised';
-  return 'Breakdown';
+  if (index <= 20) return 'STABLE';
+  if (index <= 40) return 'DRIFT_FORMING';
+  if (index <= 60) return 'COMPROMISED';
+  return 'BREAKDOWN';
 }
 
 // ============================================================
 // Convert ModeResult → Violation
 // ============================================================
+
+/**
+ * Compute mode_instance_id = sha256(mode + account_ref + onset_utc).
+ * Stable for the duration of a streak, changes when mode goes inactive→active.
+ */
+function computeModeInstanceId(
+  mode: DriftMode,
+  accountRef: string,
+  onsetUtc: string
+): string {
+  return sha256(`${mode}|${accountRef}|${onsetUtc}`);
+}
 
 function modeResultToViolation(
   result: ModeResult,
@@ -64,12 +76,14 @@ function modeResultToViolation(
   }
 
   const violationId = computeViolationId(result.rule_id, accountRef, anchorKey);
+  const modeInstanceId = computeModeInstanceId(result.mode, accountRef, onsetUtc);
 
   return {
     violation_id: violationId,
     account_ref: accountRef,
     rule_id: result.rule_id,
     mode: result.mode,
+    mode_instance_id: modeInstanceId,
     severity: result.severity,
     points: result.points,
     window_start_utc: windowStartUtc,
@@ -130,7 +144,7 @@ export function evaluate(input: EvaluationInput): EvaluationOutput {
     return {
       violations: [],
       drift_index: 0,
-      drift_state: 'Stable',
+      drift_state: 'STABLE',
       total_points: 0,
       baseline_status: baseline_window.length < config.baseline_window_fills ? 'building' : 'ready',
     };
