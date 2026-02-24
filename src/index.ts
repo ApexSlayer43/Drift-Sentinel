@@ -3,6 +3,7 @@
 // ============================================================
 
 import express from 'express';
+import http from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config, validateConfig } from './config';
@@ -49,7 +50,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // --- Start server ---
-app.listen(config.port, () => {
+const server = http.createServer(app);
+server.listen(config.port, () => {
   console.log(`Drift Sentinel backend running on port ${config.port}`);
   console.log(`Health check: http://localhost:${config.port}/health`);
 });

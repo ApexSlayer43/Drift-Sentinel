@@ -1,12 +1,19 @@
 import dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+dotenv.config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+
+// If SUPABASE_URL is just a project ref (no protocol), expand it
+function resolveSupabaseUrl(raw: string): string {
+  if (!raw) return '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  return `https://${raw}.supabase.co`;
+}
 
 export const config = {
   port: parseInt(process.env.PORT || '8000', 10),
   supabase: {
-    url: process.env.SUPABASE_URL || '',
+    url: resolveSupabaseUrl(process.env.SUPABASE_URL || ''),
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   },
   rateLimit: {
