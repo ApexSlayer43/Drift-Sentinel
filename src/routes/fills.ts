@@ -58,19 +58,19 @@ router.post(
       const { data: runData } = await supabase
         .from('ingest_runs')
         .insert({
+          user_id: '00000000-0000-0000-0000-000000000000', // TODO: extract from auth context
           account_ref,
-          source_file: source_file || 'upload',
-          fills_parsed: fills.length,
-          fills_new: 0,
-          fills_duplicate: 0,
-          fills_rejected: 0,
+          file_name: source_file || 'upload',
+          accepted_count: 0,
+          dup_count: 0,
+          reject_count: 0,
           started_at_utc: startedAt,
-          status: 'partial',
+          status: 'pending',
         })
-        .select('id')
+        .select('ingest_run_id')
         .single();
 
-      const ingestRunId = runData?.id || null;
+      const ingestRunId = runData?.ingest_run_id || null;
 
       // Upsert fills (idempotent by event_id)
       let fillsNew = 0;
@@ -84,7 +84,6 @@ router.post(
 
         const rows = batch.map(f => ({
           event_id: f.event_id,
-          source: f.source,
           account_ref: f.account_ref || account_ref,
           timestamp_utc: f.timestamp_utc,
           instrument_root: f.instrument_root,
@@ -115,13 +114,13 @@ router.post(
         await supabase
           .from('ingest_runs')
           .update({
-            fills_new: fillsNew,
-            fills_duplicate: fillsDuplicate,
-            fills_rejected: fillsRejected,
+            accepted_count: fillsNew,
+            dup_count: fillsDuplicate,
+            reject_count: fillsRejected,
             completed_at_utc: new Date().toISOString(),
             status: fillsRejected === 0 ? 'success' : fillsNew > 0 ? 'partial' : 'failed',
           })
-          .eq('id', ingestRunId);
+          .eq('ingest_run_id', ingestRunId);
       }
 
       const response: FillUploadResponse = {
@@ -183,20 +182,20 @@ router.post(
       const { data: csvRunData } = await supabase
         .from('ingest_runs')
         .insert({
+          user_id: '00000000-0000-0000-0000-000000000000', // TODO: extract from auth context
           account_ref,
-          source_file: source_file || 'csv-upload',
-          fills_parsed: parseResult.fills.length + parseResult.rejected,
-          fills_new: 0,
-          fills_duplicate: 0,
-          fills_rejected: parseResult.rejected,
+          file_name: source_file || 'csv-upload',
+          accepted_count: 0,
+          dup_count: 0,
+          reject_count: parseResult.rejected,
+          reject_summary: parseResult.errors.length > 0 ? { errors: parseResult.errors.slice(0, 20) } : {},
           started_at_utc: startedAt,
-          status: 'partial',
-          error_message: parseResult.errors.length > 0 ? parseResult.errors.join('; ') : null,
+          status: 'pending',
         })
-        .select('id')
+        .select('ingest_run_id')
         .single();
 
-      const csvIngestRunId = csvRunData?.id || null;
+      const csvIngestRunId = csvRunData?.ingest_run_id || null;
 
       // Upsert fills
       let fillsNew = 0;
@@ -208,7 +207,6 @@ router.post(
 
         const rows = batch.map(f => ({
           event_id: f.event_id,
-          source: f.source,
           account_ref: f.account_ref,
           timestamp_utc: f.timestamp_utc,
           instrument_root: f.instrument_root,
@@ -237,12 +235,12 @@ router.post(
         await supabase
           .from('ingest_runs')
           .update({
-            fills_new: fillsNew,
-            fills_duplicate: fillsDuplicate,
+            accepted_count: fillsNew,
+            dup_count: fillsDuplicate,
             completed_at_utc: new Date().toISOString(),
             status: parseResult.rejected === 0 ? 'success' : fillsNew > 0 ? 'partial' : 'failed',
           })
-          .eq('id', csvIngestRunId);
+          .eq('ingest_run_id', csvIngestRunId);
       }
 
       res.status(201).json({

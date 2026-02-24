@@ -250,7 +250,6 @@ export function parseTradovateFills(
 
       fills.push({
         event_id: eventId,
-        source: 'tradovate',
         account_ref: accountRef,
         timestamp_utc: timestampUtc,
         instrument_root: instrumentRoot,

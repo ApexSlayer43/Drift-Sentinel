@@ -6,7 +6,6 @@
 
 export interface FillEventV1 {
   event_id: string;
-  source: 'tradovate';
   account_ref: string;
   timestamp_utc: string; // ISO8601 with Z
   instrument_root: string;
@@ -107,32 +106,36 @@ export type BaselineShiftTrigger = 'size_creep' | 'off_session_shift' | 'pacing_
 // --- Ingest Run ---
 
 export interface IngestRun {
-  id?: string;
+  ingest_run_id?: string;
+  user_id: string;
   account_ref: string;
-  source_file: string;
-  fills_parsed: number;
-  fills_new: number;
-  fills_duplicate: number;
-  fills_rejected: number;
+  device_id?: string;
+  file_name: string;
+  file_hash?: string;
+  accepted_count: number;
+  dup_count: number;
+  reject_count: number;
+  reject_summary: Record<string, unknown>;
+  compute_triggered: boolean;
   started_at_utc: string;
-  completed_at_utc: string;
-  status: 'success' | 'partial' | 'failed';
-  error_message?: string;
+  completed_at_utc?: string;
+  status: 'pending' | 'success' | 'partial' | 'failed';
 }
 
-// --- License / Entitlements (stubbed) ---
+// --- Entitlements (one per user) ---
 
-export type LicenseStatus = 'trial' | 'active' | 'expired' | 'suspended';
+export type EntitlementStatus = 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED';
 
-export interface License {
-  license_id: string;
+export interface Entitlement {
   user_id: string;
-  status: LicenseStatus;
-  plan: string;
-  trial_ends_at?: string;
-  current_period_ends_at?: string;
-  max_accounts: number;
-  max_fills_per_month: number;
+  status: EntitlementStatus;
+  trial_end?: string;
+  period_end?: string;
+  limits: {
+    max_accounts: number;
+    max_fills_per_month: number;
+  };
+  updated_at: string;
 }
 
 // --- Account ownership (for RLS) ---
@@ -146,7 +149,7 @@ export interface Account {
 
 // --- Device Tokens (Windows Helper auth) ---
 
-export type DeviceTokenStatus = 'active' | 'revoked';
+export type DeviceTokenStatus = 'ACTIVE' | 'REVOKED';
 
 export interface DeviceToken {
   device_id: string;
@@ -155,7 +158,7 @@ export interface DeviceToken {
   token_hash: string;
   status: DeviceTokenStatus;
   created_at_utc: string;
-  last_seen_at_utc?: string;
+  last_seen_utc?: string;
 }
 
 // --- API Request/Response Types ---
