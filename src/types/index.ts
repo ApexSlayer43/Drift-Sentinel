@@ -54,6 +54,7 @@ export interface Violation {
   account_ref: string;
   rule_id: RuleId;
   mode: DriftMode;
+  mode_instance_id: string;
   severity: Severity;
   points: number;
   window_start_utc: string;
@@ -63,7 +64,7 @@ export interface Violation {
   created_at_utc: string;
 }
 
-export type DriftState = 'Stable' | 'Drift forming' | 'Compromised' | 'Breakdown';
+export type DriftState = 'STABLE' | 'DRIFT_FORMING' | 'COMPROMISED' | 'BREAKDOWN';
 
 export interface DriftScore {
   account_ref: string;
@@ -132,6 +133,29 @@ export interface License {
   current_period_ends_at?: string;
   max_accounts: number;
   max_fills_per_month: number;
+}
+
+// --- Account ownership (for RLS) ---
+
+export interface Account {
+  account_ref: string;
+  user_id: string;
+  source: string;
+  created_at_utc: string;
+}
+
+// --- Device Tokens (Windows Helper auth) ---
+
+export type DeviceTokenStatus = 'active' | 'revoked';
+
+export interface DeviceToken {
+  device_id: string;
+  user_id: string;
+  account_ref: string;
+  token_hash: string;
+  status: DeviceTokenStatus;
+  created_at_utc: string;
+  last_seen_at_utc?: string;
 }
 
 // --- API Request/Response Types ---

@@ -54,6 +54,24 @@ router.post(
       // Tag sessions
       tagSessions(fills, sessions);
 
+      // Create ingest run first to get the ID for linking fills
+      const { data: runData } = await supabase
+        .from('ingest_runs')
+        .insert({
+          account_ref,
+          source_file: source_file || 'upload',
+          fills_parsed: fills.length,
+          fills_new: 0,
+          fills_duplicate: 0,
+          fills_rejected: 0,
+          started_at_utc: startedAt,
+          status: 'partial',
+        })
+        .select('id')
+        .single();
+
+      const ingestRunId = runData?.id || null;
+
       // Upsert fills (idempotent by event_id)
       let fillsNew = 0;
       let fillsDuplicate = 0;
@@ -76,6 +94,7 @@ router.post(
           price: f.price,
           commission: f.commission,
           off_session: f.off_session,
+          ingest_run_id: ingestRunId,
         }));
 
         const { data, error } = await supabase
@@ -91,27 +110,22 @@ router.post(
         }
       }
 
-      // Record ingest run
-      const ingestRun: Partial<IngestRun> = {
-        account_ref,
-        source_file: source_file || 'upload',
-        fills_parsed: fills.length,
-        fills_new: fillsNew,
-        fills_duplicate: fillsDuplicate,
-        fills_rejected: fillsRejected,
-        started_at_utc: startedAt,
-        completed_at_utc: new Date().toISOString(),
-        status: fillsRejected === 0 ? 'success' : fillsNew > 0 ? 'partial' : 'failed',
-      };
-
-      const { data: runData } = await supabase
-        .from('ingest_runs')
-        .insert(ingestRun)
-        .select('id')
-        .single();
+      // Update ingest run with final counts
+      if (ingestRunId) {
+        await supabase
+          .from('ingest_runs')
+          .update({
+            fills_new: fillsNew,
+            fills_duplicate: fillsDuplicate,
+            fills_rejected: fillsRejected,
+            completed_at_utc: new Date().toISOString(),
+            status: fillsRejected === 0 ? 'success' : fillsNew > 0 ? 'partial' : 'failed',
+          })
+          .eq('id', ingestRunId);
+      }
 
       const response: FillUploadResponse = {
-        ingest_run_id: runData?.id || '',
+        ingest_run_id: ingestRunId || '',
         fills_new: fillsNew,
         fills_duplicate: fillsDuplicate,
         fills_rejected: fillsRejected,
@@ -165,6 +179,25 @@ router.post(
       // Tag sessions
       tagSessions(parseResult.fills, sessions);
 
+      // Create ingest run first to get the ID for linking fills
+      const { data: csvRunData } = await supabase
+        .from('ingest_runs')
+        .insert({
+          account_ref,
+          source_file: source_file || 'csv-upload',
+          fills_parsed: parseResult.fills.length + parseResult.rejected,
+          fills_new: 0,
+          fills_duplicate: 0,
+          fills_rejected: parseResult.rejected,
+          started_at_utc: startedAt,
+          status: 'partial',
+          error_message: parseResult.errors.length > 0 ? parseResult.errors.join('; ') : null,
+        })
+        .select('id')
+        .single();
+
+      const csvIngestRunId = csvRunData?.id || null;
+
       // Upsert fills
       let fillsNew = 0;
       let fillsDuplicate = 0;
@@ -185,6 +218,7 @@ router.post(
           price: f.price,
           commission: f.commission,
           off_session: f.off_session,
+          ingest_run_id: csvIngestRunId,
         }));
 
         const { data, error } = await supabase
@@ -198,26 +232,21 @@ router.post(
         }
       }
 
-      // Record ingest run
-      const { data: runData } = await supabase
-        .from('ingest_runs')
-        .insert({
-          account_ref,
-          source_file: source_file || 'csv-upload',
-          fills_parsed: parseResult.fills.length + parseResult.rejected,
-          fills_new: fillsNew,
-          fills_duplicate: fillsDuplicate,
-          fills_rejected: parseResult.rejected,
-          started_at_utc: startedAt,
-          completed_at_utc: new Date().toISOString(),
-          status: parseResult.rejected === 0 ? 'success' : fillsNew > 0 ? 'partial' : 'failed',
-          error_message: parseResult.errors.length > 0 ? parseResult.errors.join('; ') : null,
-        })
-        .select('id')
-        .single();
+      // Update ingest run with final counts
+      if (csvIngestRunId) {
+        await supabase
+          .from('ingest_runs')
+          .update({
+            fills_new: fillsNew,
+            fills_duplicate: fillsDuplicate,
+            completed_at_utc: new Date().toISOString(),
+            status: parseResult.rejected === 0 ? 'success' : fillsNew > 0 ? 'partial' : 'failed',
+          })
+          .eq('id', csvIngestRunId);
+      }
 
       res.status(201).json({
-        ingest_run_id: runData?.id || '',
+        ingest_run_id: csvIngestRunId || '',
         fills_parsed: parseResult.fills.length + parseResult.rejected,
         fills_new: fillsNew,
         fills_duplicate: fillsDuplicate,

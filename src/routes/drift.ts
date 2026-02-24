@@ -84,7 +84,7 @@ router.post('/evaluate', authMiddleware, async (req: Request, res: Response) => 
       res.json({
         account_ref,
         drift_index: 0,
-        drift_state: 'Stable',
+        drift_state: 'STABLE',
         total_points: 0,
         drivers: [],
         violations: [],
@@ -155,6 +155,7 @@ router.post('/evaluate', authMiddleware, async (req: Request, res: Response) => 
         account_ref: v.account_ref,
         rule_id: v.rule_id,
         mode: v.mode,
+        mode_instance_id: v.mode_instance_id,
         severity: v.severity,
         points: v.points,
         window_start_utc: v.window_start_utc,
@@ -244,7 +245,7 @@ router.get('/latest', authMiddleware, async (req: Request, res: Response) => {
       res.json({
         account_ref,
         drift_index: 0,
-        drift_state: 'Stable',
+        drift_state: 'STABLE',
         total_points: 0,
         drivers: [],
         violations: [],

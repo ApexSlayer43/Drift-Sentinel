@@ -24,7 +24,7 @@ export interface EvaluationInput {
 export interface EvaluationOutput {
   violations: Violation[];
   drift_index: number;
-  drift_state: 'Stable' | 'Drift forming' | 'Compromised' | 'Breakdown';
+  drift_state: 'STABLE' | 'DRIFT_FORMING' | 'COMPROMISED' | 'BREAKDOWN';
   total_points: number;
   baseline_status: 'ready' | 'building';
 }
