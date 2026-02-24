@@ -27,26 +27,23 @@ Schema source-of-truth note:
    - `src/engine/drift.ts` includes INACTIVE/ACTIVE onset map behavior and preserves onset while mode remains active.
    - `src/routes/drift.ts` persists per-mode state in `mode_state`.
 
-4. **`mode_instance_id` formula aligns with locked definition.**
-   - `src/engine/drift.ts` computes `mode_instance_id` using SHA-256 over `mode|account_ref|onset_utc` fields.
-
-5. **Driver ordering logic is partially aligned (points and recency).**
+4. **Driver ordering logic is partially aligned (points and recency).**
    - `src/engine/drift.ts` sorts drivers by points descending, then onset recency.
 
-6. **Drift index clamping is implemented.**
+5. **Drift index clamping is implemented.**
    - `src/engine/drift.ts` clamps drift index with `Math.min(100, totalPoints)`.
 
-7. **Webhook behavior is store-only and explicitly not scoring input.**
+6. **Webhook behavior is store-only and explicitly not scoring input.**
    - `src/routes/webhooks.ts` persists webhook events and states they do not affect drift scoring in MVP.
 
-8. **DB schema includes required MVP-B tables and key constraints.**
+7. **DB schema includes required MVP-B tables and key constraints.**
    - `supabase/migrations/20260224222008_mvp_b.sql` includes: `accounts`, `entitlements`, `user_configs`, `device_tokens`, `ingest_runs`, `fills_canonical`, `mode_state`, `violations`, `drift_scores`, `webhook_events`.
 
-9. **Financial precision and idempotency constraints exist in schema.**
+8. **Financial precision and idempotency constraints exist in schema.**
    - `supabase/migrations/20260224222008_mvp_b.sql` uses `NUMERIC(18,8)` for `fills_canonical.price` and `fills_canonical.commission`.
    - `supabase/migrations/20260224222008_mvp_b.sql` has `fills_canonical.event_id` primary key and `UNIQUE(device_id,file_hash)` on `ingest_runs` and `UNIQUE(token_hash)` on `device_tokens`.
 
-10. **RLS read policies and authenticated write-deny policies are present in schema.**
+9. **RLS read policies and authenticated write-deny policies are present in schema.**
     - `supabase/migrations/20260224222008_mvp_b.sql` enables RLS per table, defines SELECT policies, and denies authenticated writes.
 
 ---
@@ -88,22 +85,34 @@ Schema source-of-truth note:
    - **Spec conflict:** Tie-break must be alphabetical by `rule_id`.
    - **Minimal corrective action:** Sort by `rule_id` as final comparator.
 
-8. **Violation identity semantics differ from MVP-B snapshot requirement.**
+8. **OPEN VIOLATION — `mode_instance_id` input ordering mismatch.**
+   - **Now:** `src/engine/drift.ts` computes `mode_instance_id` using `sha256(mode + '|' + account_ref + '|' + onset_utc)`.
+   - **Spec conflict:** MVP-B requires `sha256(account_ref + '|' + mode + '|' + onset_utc)`.
+   - **Minimal corrective action:** Update hash input ordering to `account_ref|mode|onset_utc` and backfill strategy as needed for continuity.
+   - **Status:** follow-up code PR required.
+
+9. **OPEN VIOLATION — severity domain mismatch (`CRITICAL`).**
+   - **Now:** Engine paths can emit `CRITICAL` severity, while schema/spec path for this migration allows `LOW|MED|HIGH`.
+   - **Spec conflict:** Runtime severity set must match persisted schema/spec domain.
+   - **Minimal corrective action:** Follow-up code PR will map `CRITICAL -> HIGH` before persistence (or revise schema/spec in lockstep).
+   - **Status:** follow-up code PR required.
+
+10. **Violation identity semantics differ from MVP-B snapshot requirement.**
    - **Now:** `src/engine/utils.ts` + `src/engine/drift.ts` compute deterministic `violation_id` from `rule_id|account_ref|anchor_key` intended to be stable across evaluations.
    - **Spec conflict:** MVP-B requires evaluation-snapshot `violation_id` (not stable identity over time).
    - **Minimal corrective action:** Move to per-evaluation snapshot identity (while retaining `mode_instance_id` for streak continuity).
 
-9. **Webhook endpoint identity contract differs (`user_license_id` used, not device/account binding).**
+11. **Webhook endpoint identity contract differs (`user_license_id` used, not device/account binding).**
    - **Now:** `src/routes/webhooks.ts` validates/stores `user_license_id`; optional payload `account_ref` is accepted directly.
    - **Spec conflict:** MVP-B authority model is device token binding + account mapping for ingest and extension reads; webhook should be context storage and avoid trust in payload account binding.
    - **Minimal corrective action:** Align webhook identity/mapping model with account ownership constraints; avoid payload account trust.
 
-10. **Supabase client always uses service role at runtime paths.**
+12. **Supabase client always uses service role at runtime paths.**
     - **Now:** `src/db/supabase.ts` creates one service-role client; route code performs all reads/writes through it.
     - **Spec risk:** While service-role writes are allowed, contract also expects authenticated read scoping and write deny for non-service callers; using service role universally bypasses RLS in app-layer operations.
     - **Minimal corrective action:** Separate caller-scoped client (for user-scoped reads) from service writer client, or enforce equivalent app-layer ownership checks before each query.
 
-11. **UI contract not represented in repository artifacts.**
+13. **UI contract not represented in repository artifacts.**
     - **Now:** API repository has no explicit badge+drawer UI contract docs beyond ad hoc comments.
     - **Spec conflict:** MVP-B scope explicitly constrains UI surface to badge + drawer only.
     - **Minimal corrective action:** Keep this as documented architectural boundary in product docs and extension contract docs (without requiring backend runtime changes).

@@ -44,7 +44,7 @@ create table if not exists public.user_configs (
   max_fills_per_day     integer not null default 5,
   baseline_window_fills integer not null default 10,
   scoring_window_fills  integer not null default 20,
-  sessions_utc          jsonb not null default '{}'::jsonb,
+  sessions_utc          jsonb not null default '[]'::jsonb,
   updated_at            timestamptz not null default now(),
   constraint user_configs_positive_chk check (
     max_contracts > 0 and
