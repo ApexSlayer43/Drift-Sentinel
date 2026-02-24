@@ -98,7 +98,6 @@ router.post('/evaluate', authMiddleware, async (req: Request, res: Response) => 
     // Reverse to chronological order
     const allFills: FillEventV1[] = recentFills.reverse().map(f => ({
       event_id: f.event_id,
-      source: f.source,
       account_ref: f.account_ref,
       timestamp_utc: f.timestamp_utc,
       instrument_root: f.instrument_root,
@@ -117,9 +116,9 @@ router.post('/evaluate', authMiddleware, async (req: Request, res: Response) => 
     const baselineStart = Math.max(0, baselineEnd - config.baseline_window_fills);
     const baselineWindow = allFills.slice(baselineStart, baselineEnd);
 
-    // Fetch current onset state
+    // Fetch current onset state from mode_state table
     const { data: onsetRows } = await supabase
-      .from('onset_state')
+      .from('mode_state')
       .select('*')
       .eq('account_ref', account_ref);
 
@@ -128,7 +127,7 @@ router.post('/evaluate', authMiddleware, async (req: Request, res: Response) => 
       for (const row of onsetRows) {
         if (row.mode in currentOnset) {
           const mode = row.mode as keyof OnsetMap;
-          if (row.status === 'ACTIVE' && row.onset_utc) {
+          if (row.state === 'ACTIVE' && row.onset_utc) {
             currentOnset[mode] = { status: 'ACTIVE', onset_utc: row.onset_utc };
           } else {
             currentOnset[mode] = { status: 'INACTIVE' };
@@ -170,17 +169,17 @@ router.post('/evaluate', authMiddleware, async (req: Request, res: Response) => 
         .upsert(violationRows, { onConflict: 'violation_id' });
     }
 
-    // Persist onset state
+    // Persist onset state to mode_state table
     const ALL_MODES = ['OVERSIZE', 'OFF_SESSION', 'FREQUENCY', 'BASELINE_SHIFT'] as const;
     for (const mode of ALL_MODES) {
-      const state = updatedOnset[mode];
+      const modeState = updatedOnset[mode];
       await supabase
-        .from('onset_state')
+        .from('mode_state')
         .upsert({
           account_ref,
           mode,
-          status: state.status,
-          onset_utc: state.status === 'ACTIVE' ? state.onset_utc : null,
+          state: modeState.status,
+          onset_utc: modeState.status === 'ACTIVE' ? modeState.onset_utc : null,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'account_ref,mode' });
     }
